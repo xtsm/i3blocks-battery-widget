@@ -28,34 +28,73 @@ impl FromStr for BatteryStatus {
 }
 
 #[derive(Debug)]
-pub struct BatteryInfo {
-    pub name: String,
-    pub status: BatteryStatus,
+pub struct BatteryEnergyInfo {
     pub power_now: u64,
     pub energy_now: u64,
     pub energy_full: u64,
 }
 
+#[derive(Debug)]
+pub struct BatteryChargeInfo {
+    pub current_now: u64,
+    pub charge_now: u64,
+    pub charge_full: u64,
+}
+
+#[derive(Debug)]
+pub enum BatteryMetrics {
+    Energy(BatteryEnergyInfo),
+    Charge(BatteryChargeInfo),
+}
+
+#[derive(Debug)]
+pub struct BatteryInfo {
+    pub name: String,
+    pub status: BatteryStatus,
+    pub metrics: BatteryMetrics,
+}
+
 impl BatteryInfo {
     pub fn hours_to_status_change(&self) -> Result<Option<f64>, Error> {
-        if self.power_now == 0 {
-            Ok(None)
-        } else {
-            match self.status {
-                BatteryStatus::Charging => Ok(Some(
-                    (self.energy_full - self.energy_now) as f64 / self.power_now as f64,
-                )),
-                BatteryStatus::Discharging => {
-                    Ok(Some(self.energy_now as f64 / self.power_now as f64))
+        match self.status {
+            BatteryStatus::Charging => Ok(
+                match &self.metrics {
+                    BatteryMetrics::Energy(e) => if e.power_now > 0 {
+                        Some((e.energy_full - e.energy_now) as f64 / e.power_now as f64)
+                    } else {
+                        None
+                    },
+                    BatteryMetrics::Charge(c) => if c.current_now > 0 {
+                        Some((c.charge_full - c.charge_now) as f64 / c.current_now as f64)
+                    } else {
+                        None
+                    },
                 }
-                BatteryStatus::Full => Ok(None),
-                s => Err(Error::InvalidStatusForTimeEstimation(s)),
-            }
+            ),
+            BatteryStatus::Discharging => Ok(
+                match &self.metrics {
+                    BatteryMetrics::Energy(e) => if e.power_now > 0 {
+                        Some(e.energy_now as f64 / e.power_now as f64)
+                    } else {
+                        None
+                    },
+                    BatteryMetrics::Charge(c) => if c.current_now > 0 {
+                        Some(c.charge_now as f64 / c.current_now as f64)
+                    } else {
+                        None
+                    },
+                }
+            ),
+            BatteryStatus::Full => Ok(None),
+            s => Err(Error::InvalidStatusForTimeEstimation(s)),
         }
     }
 
     pub fn capacity(&self) -> f64 {
-        self.energy_now as f64 / self.energy_full as f64
+        match &self.metrics {
+            BatteryMetrics::Energy(e) => e.energy_now as f64 / e.energy_full as f64,
+            BatteryMetrics::Charge(c) => c.charge_now as f64 / c.charge_full as f64,
+        }
     }
 }
 
@@ -116,9 +155,19 @@ pub fn read_battery_infos() -> Result<Vec<BatteryInfo>, Error> {
                     .into_string()
                     .map_err(Error::InvalidBatteryName)?,
                 status: parse_from_file(&entry.path().join("status"))?,
-                power_now: parse_from_file(&entry.path().join("power_now"))?,
-                energy_now: parse_from_file(&entry.path().join("energy_now"))?,
-                energy_full: parse_from_file(&entry.path().join("energy_full"))?,
+                metrics: if entry.path().join("power_now").exists() {
+                    BatteryMetrics::Energy(BatteryEnergyInfo {
+                        power_now: parse_from_file(&entry.path().join("power_now"))?,
+                        energy_now: parse_from_file(&entry.path().join("energy_now"))?,
+                        energy_full: parse_from_file(&entry.path().join("energy_full"))?,
+                    })
+                } else {
+                    BatteryMetrics::Charge(BatteryChargeInfo {
+                        current_now: parse_from_file(&entry.path().join("current_now"))?,
+                        charge_now: parse_from_file(&entry.path().join("charge_now"))?,
+                        charge_full: parse_from_file(&entry.path().join("charge_full"))?,
+                    })
+                }
             }))
         })
         .collect::<Result<Vec<_>, _>>()
