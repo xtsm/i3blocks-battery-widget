@@ -85,7 +85,7 @@ impl BatteryInfo {
                     },
                 }
             ),
-            BatteryStatus::Full => Ok(None),
+            BatteryStatus::Full | BatteryStatus::NotCharging => Ok(None),
             s => Err(Error::InvalidStatusForTimeEstimation(s)),
         }
     }
